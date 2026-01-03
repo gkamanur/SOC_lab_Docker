@@ -1,0 +1,73 @@
+FROM kalilinux/kali-rolling:latest
+
+# Avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install attack tools
+RUN apt-get update && apt-get install -y \
+    nmap \
+    hydra \
+    metasploit-framework \
+    sqlmap \
+    nikto \
+    dirb \
+    gobuster \
+    wfuzz \
+    john \
+    hashcat \
+    aircrack-ng \
+    burpsuite \
+    zaproxy \
+    curl \
+    wget \
+    git \
+    python3 \
+    python3-pip \
+    netcat-traditional \
+    tcpdump \
+    wireshark \
+    tshark \
+    dnsutils \
+    net-tools \
+    iputils-ping \
+    openssh-client \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PowerShell for Atomic Red Team
+RUN wget https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb && \
+    dpkg -i packages-microsoft-prod.deb && \
+    apt-get update && \
+    apt-get install -y powershell && \
+    rm packages-microsoft-prod.deb
+
+# Install Impacket (for lateral movement tools)
+# Kali uses PEP 668, so we use apt or --break-system-packages
+RUN apt-get update && apt-get install -y python3-impacket || \
+    pip3 install impacket --break-system-packages
+
+# Create attack scripts directory
+RUN mkdir -p /opt/attack-tools /opt/attack-scenarios
+
+# Create helper script for common attacks
+RUN echo '#!/bin/bash\n\
+echo "SOC Lab - Kali Attacker Container"\n\
+echo "================================"\n\
+echo "Available targets:"\n\
+echo "  Ubuntu Web: 172.20.0.50:80 (SSH: 172.20.0.50:22)"\n\
+echo "  Windows Sim: 172.20.0.60"\n\
+echo ""\n\
+echo "Quick attack commands:"\n\
+echo "  nmap -sV 172.20.0.50          # Scan web server"\n\
+echo "  hydra -l webadmin -P /usr/share/wordlists/rockyou.txt ssh://172.20.0.50  # SSH brute force"\n\
+echo "  nikto -h http://172.20.0.50   # Web vulnerability scan"\n\
+echo "  sqlmap -u http://172.20.0.50/test.php?id=1  # SQL injection"\n\
+echo ""\n\
+/bin/bash\n\
+' > /opt/attack-tools/help.sh && chmod +x /opt/attack-tools/help.sh
+
+WORKDIR /opt/attack-tools
+
+CMD ["/bin/bash", "/opt/attack-tools/help.sh"]

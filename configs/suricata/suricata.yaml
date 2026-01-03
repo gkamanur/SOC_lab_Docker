@@ -1,0 +1,328 @@
+%YAML 1.1
+---
+
+# Suricata Configuration for SOC Detection Lab
+# Optimized for Docker container deployment
+
+vars:
+  address-groups:
+    HOME_NET: "[172.20.0.0/16]"
+    EXTERNAL_NET: "!$HOME_NET"
+    
+    HTTP_SERVERS: "$HOME_NET"
+    SMTP_SERVERS: "$HOME_NET"
+    SQL_SERVERS: "$HOME_NET"
+    DNS_SERVERS: "$HOME_NET"
+    TELNET_SERVERS: "$HOME_NET"
+    AIM_SERVERS: "$EXTERNAL_NET"
+    DC_SERVERS: "$HOME_NET"
+    DNP3_SERVER: "$HOME_NET"
+    DNP3_CLIENT: "$HOME_NET"
+    MODBUS_CLIENT: "$HOME_NET"
+    MODBUS_SERVER: "$HOME_NET"
+    ENIP_CLIENT: "$HOME_NET"
+    ENIP_SERVER: "$HOME_NET"
+
+  port-groups:
+    HTTP_PORTS: "80"
+    SHELLCODE_PORTS: "!80"
+    ORACLE_PORTS: 1521
+    SSH_PORTS: 22
+    DNP3_PORTS: 20000
+    MODBUS_PORTS: 502
+    FILE_DATA_PORTS: "[$HTTP_PORTS,110,143]"
+    FTP_PORTS: 21
+    GENEVE_PORTS: 6081
+    VXLAN_PORTS: 4789
+    TEREDO_PORTS: 3544
+
+# Default rule path
+default-rule-path: /var/lib/suricata/rules
+
+# Rule files to load
+rule-files:
+  - suricata.rules
+  - /etc/suricata/rules/custom.rules
+
+# Logging configuration
+outputs:
+  # EVE JSON log - Primary output for SIEM integration
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: /var/log/suricata/eve.json
+      
+      # Log rotation
+      rotate-interval: 1h
+      
+      # Event types to log
+      types:
+        - alert:
+            # Payload logging for deep analysis
+            payload: yes
+            payload-buffer-size: 4kb
+            payload-printable: yes
+            packet: yes
+            metadata: yes
+            
+        - anomaly:
+            enabled: yes
+            types:
+              decode: yes
+              stream: yes
+              applayer: yes
+              
+        - http:
+            extended: yes
+            custom: [Accept, Accept-Charset, Accept-Encoding, Accept-Language,
+                     Authorization, Cache-Control, Cookie, From,
+                     Max-Forwards, Origin, Pragma, Proxy-Authorization,
+                     Range, TE, Via, X-Requested-With, X-Forwarded-For,
+                     X-Forwarded-Proto, X-Forwarded-Host, X-Real-IP,
+                     User-Agent, Host, Content-Type, Content-Length,
+                     Referer, Server, Location, Set-Cookie]
+                     
+        - dns:
+            enabled: yes
+            version: 2
+            
+        - tls:
+            extended: yes
+            session-resumption: yes
+            custom: [subject, issuer, serial, fingerprint, sni, 
+                     version, not_before, not_after, certificate, chain, ja3, ja3s]
+                     
+        - files:
+            force-magic: yes
+            force-hash: [md5, sha1, sha256]
+            
+        - ssh:
+            enabled: yes
+            
+        - smtp:
+            enabled: yes
+            extended: yes
+            
+        - flow:
+            enabled: yes
+            
+        - netflow:
+            enabled: no
+            
+        - stats:
+            enabled: yes
+            totals: yes
+            threads: yes
+            
+        - dhcp:
+            enabled: yes
+            extended: yes
+
+  # Fast log - Simple alert log
+  - fast:
+      enabled: yes
+      filename: /var/log/suricata/fast.log
+      append: yes
+
+  # Stats log
+  - stats:
+      enabled: yes
+      filename: /var/log/suricata/stats.log
+      append: yes
+      totals: yes
+      threads: yes
+
+# Logging level
+logging:
+  default-log-level: notice
+  default-output-filter:
+  
+  outputs:
+  - console:
+      enabled: yes
+  - file:
+      enabled: yes
+      level: info
+      filename: /var/log/suricata/suricata.log
+  - syslog:
+      enabled: no
+
+# Application layer protocol detection
+app-layer:
+  protocols:
+    rfb:
+      enabled: yes
+    mqtt:
+      enabled: yes
+    krb5:
+      enabled: yes
+    ikev2:
+      enabled: yes
+    tls:
+      enabled: yes
+      detection-ports:
+        dp: 443
+      ja3-fingerprints: yes
+    dcerpc:
+      enabled: yes
+    ftp:
+      enabled: yes
+    ssh:
+      enabled: yes
+    smtp:
+      enabled: yes
+    imap:
+      enabled: detection-only
+    smb:
+      enabled: yes
+      detection-ports:
+        dp: 139, 445
+    nfs:
+      enabled: yes
+    tftp:
+      enabled: yes
+    dns:
+      tcp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+      udp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+    http:
+      enabled: yes
+      libhtp:
+        default-config:
+          personality: IDS
+          request-body-limit: 100kb
+          response-body-limit: 100kb
+          request-body-minimal-inspect-size: 32kb
+          request-body-inspect-window: 4kb
+          response-body-minimal-inspect-size: 40kb
+          response-body-inspect-window: 16kb
+          response-body-decompress-layer-limit: 2
+          http-body-inline: auto
+          double-decode-path: no
+          double-decode-query: no
+
+# Threading configuration
+threading:
+  set-cpu-affinity: no
+  cpu-affinity:
+    - management-cpu-set:
+        cpu: [ 0 ]
+    - receive-cpu-set:
+        cpu: [ 0 ]
+    - worker-cpu-set:
+        cpu: [ 0,1 ]
+  detect-thread-ratio: 1.0
+
+# Packet capture configuration
+af-packet:
+  - interface: eth0
+    threads: 2
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    use-mmap: yes
+    tpacket-v3: yes
+    ring-size: 2048
+    block-size: 32768
+
+# Packet defragmentation
+defrag:
+  memcap: 32mb
+  hash-size: 65536
+  trackers: 65535
+  max-frags: 65535
+  prealloc: yes
+  timeout: 60
+
+# Flow settings
+flow:
+  memcap: 128mb
+  hash-size: 65536
+  prealloc: 10000
+  emergency-recovery: 30
+
+# Stream engine settings
+stream:
+  memcap: 64mb
+  checksum-validation: yes
+  inline: auto
+  reassembly:
+    memcap: 256mb
+    depth: 1mb
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+    randomize-chunk-size: yes
+
+# Host table
+host:
+  hash-size: 4096
+  prealloc: 1000
+  memcap: 32mb
+
+# Detection engine
+detect:
+  profile: medium
+  custom-values:
+    toclient-groups: 3
+    toserver-groups: 25
+  sgh-mpm-context: auto
+  inspection-recursion-limit: 3000
+  prefilter:
+    default: mpm
+
+# Profiling (disabled for production)
+profiling:
+  rules:
+    enabled: no
+    filename: /var/log/suricata/rule_perf.log
+    append: yes
+  keywords:
+    enabled: no
+    filename: /var/log/suricata/keyword_perf.log
+    append: yes
+  prefilter:
+    enabled: no
+    filename: /var/log/suricata/prefilter_perf.log
+    append: yes
+  rulegroups:
+    enabled: no
+    filename: /var/log/suricata/rule_group_perf.log
+    append: yes
+  packets:
+    enabled: no
+    filename: /var/log/suricata/packet_stats.log
+    append: yes
+    csv:
+      enabled: no
+      filename: /var/log/suricata/packet_stats.csv
+
+# Packet capture (pcap) settings
+pcap:
+  - interface: eth0
+
+# Unix command socket
+unix-command:
+  enabled: yes
+  filename: /var/run/suricata/suricata-command.socket
+
+# Legacy settings
+legacy:
+  uricontent: enabled
+
+# Engine analysis (for debugging)
+engine-analysis:
+  rules-fast-pattern: yes
+  rules: yes
+
+# Packet acquisition
+pcap-file:
+  checksum-checks: auto
+
+# Lua scripting (disabled)
+lua:
+  max-bytes: 1mb

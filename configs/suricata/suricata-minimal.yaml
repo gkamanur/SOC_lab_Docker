@@ -1,0 +1,162 @@
+%YAML 1.1
+---
+
+# Suricata Minimal Configuration for Low-Memory Environments
+# Optimized for systems with 1.5-4GB RAM
+# Memory target: ~150MB
+
+vars:
+  address-groups:
+    HOME_NET: "[172.20.0.0/16]"
+    EXTERNAL_NET: "!$HOME_NET"
+    HTTP_SERVERS: "$HOME_NET"
+    DNS_SERVERS: "$HOME_NET"
+
+  port-groups:
+    HTTP_PORTS: "80"
+    SSH_PORTS: 22
+
+# Rule configuration
+default-rule-path: /etc/suricata/rules
+rule-files:
+  - custom.rules
+
+# Minimal logging - alerts only
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: /var/log/suricata/eve.json
+      rotate-interval: 6h
+      
+      types:
+        - alert:
+            payload: yes
+            payload-buffer-size: 2kb
+            payload-printable: yes
+            packet: no
+            metadata: yes
+            
+        - http:
+            extended: no
+            
+        - dns:
+            enabled: yes
+            version: 2
+
+  - fast:
+      enabled: yes
+      filename: /var/log/suricata/fast.log
+      append: yes
+
+# Minimal logging
+logging:
+  default-log-level: warning
+  outputs:
+  - console:
+      enabled: yes
+  - file:
+      enabled: yes
+      level: warning
+      filename: /var/log/suricata/suricata.log
+
+# Essential protocols only
+app-layer:
+  protocols:
+    tls:
+      enabled: yes
+      detection-ports:
+        dp: 443
+      ja3-fingerprints: no
+    ssh:
+      enabled: yes
+    dns:
+      tcp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+      udp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+    http:
+      enabled: yes
+      libhtp:
+        default-config:
+          personality: IDS
+          request-body-limit: 32kb
+          response-body-limit: 32kb
+          request-body-minimal-inspect-size: 16kb
+          request-body-inspect-window: 2kb
+          response-body-minimal-inspect-size: 16kb
+          response-body-inspect-window: 4kb
+
+# Single thread configuration
+threading:
+  set-cpu-affinity: no
+  detect-thread-ratio: 1.0
+
+# Minimal packet capture
+af-packet:
+  - interface: eth0
+    threads: 1
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    use-mmap: yes
+    ring-size: 1024
+    block-size: 16384
+
+# Reduced memory caps
+defrag:
+  memcap: 16mb
+  hash-size: 16384
+  trackers: 16384
+  max-frags: 16384
+  prealloc: yes
+  timeout: 60
+
+flow:
+  memcap: 32mb
+  hash-size: 16384
+  prealloc: 1000
+  emergency-recovery: 30
+
+stream:
+  memcap: 32mb
+  checksum-validation: yes
+  inline: auto
+  reassembly:
+    memcap: 64mb
+    depth: 512kb
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+
+host:
+  hash-size: 1024
+  prealloc: 500
+  memcap: 16mb
+
+# Lightweight detection
+detect:
+  profile: low
+  custom-values:
+    toclient-groups: 2
+    toserver-groups: 10
+  sgh-mpm-context: single
+  inspection-recursion-limit: 1000
+
+# Profiling disabled
+profiling:
+  rules:
+    enabled: no
+  keywords:
+    enabled: no
+
+# Unix socket
+unix-command:
+  enabled: yes
+  filename: /var/run/suricata/suricata-command.socket
+
+legacy:
+  uricontent: enabled

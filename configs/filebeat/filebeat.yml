@@ -1,0 +1,16 @@
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/log/ubuntu-web/auth.log
+    - /var/log/ubuntu-web/apache2/*.log
+    - /var/log/windows-sim/*.json
+    - /var/log/suricata/eve.json
+  json.keys_under_root: true
+  json.add_error_key: true
+
+output.logstash:
+  hosts: ["172.20.0.11:5044"]
+
+setup.kibana:
+  host: "172.20.0.12:5601"

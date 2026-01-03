@@ -1,0 +1,165 @@
+# Custom Suricata Rules for SOC Detection Lab
+# These rules detect common attack patterns in lab scenarios
+
+# ============================================
+# RECONNAISSANCE & SCANNING
+# ============================================
+
+# Nmap SYN scan detection
+alert tcp any any -> $HOME_NET any (msg:"SOC-LAB: Nmap SYN Scan Detected"; flags:S,12; threshold: type both, track by_src, count 20, seconds 60; classtype:attempted-recon; sid:1000001; rev:1;)
+
+# Nmap NULL scan detection
+alert tcp any any -> $HOME_NET any (msg:"SOC-LAB: Nmap NULL Scan Detected"; flags:0; threshold: type both, track by_src, count 10, seconds 60; classtype:attempted-recon; sid:1000002; rev:1;)
+
+# Nmap XMAS scan detection
+alert tcp any any -> $HOME_NET any (msg:"SOC-LAB: Nmap XMAS Scan Detected"; flags:FPU,12; threshold: type both, track by_src, count 10, seconds 60; classtype:attempted-recon; sid:1000003; rev:1;)
+
+# Nmap FIN scan detection
+alert tcp any any -> $HOME_NET any (msg:"SOC-LAB: Nmap FIN Scan Detected"; flags:F,12; threshold: type both, track by_src, count 10, seconds 60; classtype:attempted-recon; sid:1000004; rev:1;)
+
+# Nmap version detection
+alert tcp any any -> $HOME_NET any (msg:"SOC-LAB: Nmap Service Version Detection"; content:"Nmap"; nocase; classtype:attempted-recon; sid:1000005; rev:1;)
+
+# Masscan detection
+alert tcp any any -> $HOME_NET any (msg:"SOC-LAB: Masscan Activity Detected"; flags:S; threshold: type both, track by_src, count 50, seconds 10; classtype:attempted-recon; sid:1000006; rev:1;)
+
+# Port sweep detection
+alert tcp any any -> $HOME_NET any (msg:"SOC-LAB: Port Sweep Detected"; flags:S; threshold: type threshold, track by_src, count 30, seconds 60; classtype:attempted-recon; sid:1000007; rev:1;)
+
+# ============================================
+# WEB ATTACKS
+# ============================================
+
+# SQL Injection attempts
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: SQL Injection Attempt - UNION SELECT"; flow:established,to_server; content:"union"; nocase; http_uri; content:"select"; nocase; http_uri; classtype:web-application-attack; sid:1000010; rev:1;)
+
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: SQL Injection Attempt - OR 1=1"; flow:established,to_server; content:"or"; nocase; http_uri; content:"1=1"; nocase; http_uri; classtype:web-application-attack; sid:1000011; rev:1;)
+
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: SQL Injection Attempt - DROP TABLE"; flow:established,to_server; content:"drop"; nocase; http_uri; content:"table"; nocase; http_uri; classtype:web-application-attack; sid:1000012; rev:1;)
+
+# XSS attempts
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: Cross-Site Scripting (XSS) Attempt"; flow:established,to_server; content:"<script"; nocase; http_uri; classtype:web-application-attack; sid:1000013; rev:1;)
+
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: XSS Attempt - JavaScript Event Handler"; flow:established,to_server; content:"onerror="; nocase; http_uri; classtype:web-application-attack; sid:1000014; rev:1;)
+
+# Directory traversal
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: Directory Traversal Attempt"; flow:established,to_server; content:"../"; http_uri; threshold: type threshold, track by_src, count 3, seconds 60; classtype:web-application-attack; sid:1000015; rev:1;)
+
+# Command injection
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: Command Injection Attempt - Shell Commands"; flow:established,to_server; pcre:"/[\x7c\x3b\x60\x26]|(\x24\x28)/U"; classtype:web-application-attack; sid:1000016; rev:2;)
+
+# Web shell upload attempts
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: Potential Web Shell Upload"; flow:established,to_server; content:"POST"; http_method; content:".php"; http_uri; content:"cmd"; nocase; http_client_body; classtype:web-application-attack; sid:1000017; rev:1;)
+
+# Admin panel access attempts
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: Admin Panel Access Attempt"; flow:established,to_server; content:"/admin"; http_uri; threshold: type threshold, track by_src, count 5, seconds 300; classtype:web-application-activity; sid:1000018; rev:1;)
+
+# ============================================
+# BRUTE FORCE ATTACKS
+# ============================================
+
+# SSH brute force
+alert tcp any any -> $HOME_NET 22 (msg:"SOC-LAB: SSH Brute Force Attempt"; flow:established,to_server; content:"SSH"; threshold: type both, track by_src, count 5, seconds 60; classtype:attempted-admin; sid:1000020; rev:1;)
+
+# HTTP authentication brute force
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: HTTP Basic Auth Brute Force"; flow:established,to_server; content:"Authorization: Basic"; http_header; threshold: type both, track by_src, count 10, seconds 60; classtype:attempted-admin; sid:1000021; rev:1;)
+
+# Failed login attempts (generic)
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"SOC-LAB: Multiple Failed Login Attempts"; flow:established,to_server; content:"POST"; http_method; content:"login"; nocase; http_uri; threshold: type both, track by_src, count 10, seconds 120; classtype:attempted-admin; sid:1000022; rev:1;)
+
+# ============================================
+# MALWARE & EXPLOITS
+# ============================================
+
+# Metasploit user agent
+alert http any any -> $HOME_NET any (msg:"SOC-LAB: Metasploit User Agent Detected"; flow:established,to_server; content:"User-Agent|3a| Metasploit"; http_header; classtype:trojan-activity; sid:1000030; rev:1;)
+
+# Meterpreter reverse shell
+alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"SOC-LAB: Potential Meterpreter Reverse Shell"; flow:established,to_client; content:"meterpreter"; nocase; classtype:trojan-activity; sid:1000031; rev:1;)
+
+# Mimikatz execution indicators
+alert tcp any any -> $HOME_NET any (msg:"SOC-LAB: Mimikatz Activity Detected"; flow:established; content:"mimikatz"; nocase; classtype:credential-theft; sid:1000032; rev:1;)
+
+# PowerShell download cradle
+alert http any any -> $HOME_NET any (msg:"SOC-LAB: PowerShell Download Cradle Detected"; flow:established; content:"powershell"; nocase; content:"downloadstring"; nocase; classtype:trojan-activity; sid:1000033; rev:1;)
+
+# Suspicious executable download
+alert http any any -> $HOME_NET any (msg:"SOC-LAB: Suspicious EXE Download"; flow:established,to_client; content:"Content-Type|3a| application/x-msdownload"; http_header; classtype:policy-violation; sid:1000034; rev:1;)
+
+# ============================================
+# LATERAL MOVEMENT
+# ============================================
+
+# SMB enumeration
+alert tcp any any -> $HOME_NET 445 (msg:"SOC-LAB: SMB Enumeration Attempt"; flow:established,to_server; threshold: type both, track by_src, count 10, seconds 60; classtype:attempted-recon; sid:1000040; rev:1;)
+
+# RDP brute force
+alert tcp any any -> $HOME_NET 3389 (msg:"SOC-LAB: RDP Brute Force Attempt"; flow:established,to_server; threshold: type both, track by_src, count 5, seconds 60; classtype:attempted-admin; sid:1000041; rev:1;)
+
+# WMI lateral movement
+alert tcp any any -> $HOME_NET 135 (msg:"SOC-LAB: Potential WMI Lateral Movement"; flow:established,to_server; content:"|05 00 0b|"; depth:3; classtype:attempted-admin; sid:1000042; rev:1;)
+
+# ============================================
+# DATA EXFILTRATION
+# ============================================
+
+# Large outbound data transfer
+alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"SOC-LAB: Large Outbound Data Transfer"; flow:established,to_client; threshold: type threshold, track by_src, count 100, seconds 60; classtype:policy-violation; sid:1000050; rev:1;)
+
+# DNS tunneling detection
+alert dns any any -> any any (msg:"SOC-LAB: Potential DNS Tunneling - Long Query"; dns_query; content:"."; pcre:"/^.{50,}/"; classtype:policy-violation; sid:1000051; rev:1;)
+
+# Suspicious TXT record query
+alert dns any any -> any any (msg:"SOC-LAB: Suspicious DNS TXT Record Query"; dns_query; content:"|00 10 00 01|"; classtype:policy-violation; sid:1000052; rev:1;)
+
+# ============================================
+# SUSPICIOUS NETWORK ACTIVITY
+# ============================================
+
+# Tor connection attempt
+alert tcp $HOME_NET any -> $EXTERNAL_NET [9001,9030,9050,9051] (msg:"SOC-LAB: Tor Network Connection Attempt"; flow:established,to_server; classtype:policy-violation; sid:1000060; rev:1;)
+
+# Suspicious outbound connection on common C2 ports
+alert tcp $HOME_NET any -> $EXTERNAL_NET [4444,5555,6666,7777,8888] (msg:"SOC-LAB: Suspicious Outbound Connection - Common C2 Port"; flow:established,to_server; classtype:trojan-activity; sid:1000061; rev:1;)
+
+# ICMP tunneling
+alert icmp any any -> any any (msg:"SOC-LAB: Potential ICMP Tunneling"; itype:8; dsize:>100; classtype:policy-violation; sid:1000062; rev:1;)
+
+# ============================================
+# CREDENTIAL ATTACKS
+# ============================================
+
+# Kerberoasting detection
+alert tcp any any -> $HOME_NET 88 (msg:"SOC-LAB: Potential Kerberoasting Activity"; flow:established,to_server; content:"|a0 03 02 01 05|"; threshold: type both, track by_src, count 10, seconds 60; classtype:credential-theft; sid:1000070; rev:1;)
+
+# NTLM relay attempt
+alert tcp any any -> $HOME_NET 445 (msg:"SOC-LAB: Potential NTLM Relay Attack"; flow:established,to_server; content:"NTLMSSP"; classtype:credential-theft; sid:1000071; rev:1;)
+
+# Password spraying
+alert tcp any any -> $HOME_NET [389,636,3268,3269] (msg:"SOC-LAB: Potential Password Spraying - LDAP"; flow:established,to_server; threshold: type both, track by_src, count 20, seconds 300; classtype:attempted-admin; sid:1000072; rev:1;)
+
+# ============================================
+# VULNERABILITY EXPLOITATION
+# ============================================
+
+# Shellshock exploitation attempt
+alert http any any -> $HOME_NET any (msg:"SOC-LAB: Shellshock Exploitation Attempt"; flow:established,to_server; content:"() {"; http_header; classtype:attempted-admin; sid:1000080; rev:1;)
+
+# Log4Shell exploitation attempt
+alert http any any -> $HOME_NET any (msg:"SOC-LAB: Log4Shell Exploitation Attempt"; flow:established; content:"${jndi:"; nocase; classtype:attempted-admin; sid:1000081; rev:1;)
+
+# SQL Server xp_cmdshell abuse
+alert tcp any any -> $HOME_NET 1433 (msg:"SOC-LAB: SQL Server xp_cmdshell Execution Attempt"; flow:established,to_server; content:"xp_cmdshell"; nocase; classtype:attempted-admin; sid:1000082; rev:1;)
+
+# ============================================
+# CUSTOM LAB SCENARIOS
+# ============================================
+
+# Detect traffic to ubuntu-web server
+alert http any any -> 172.20.0.50 80 (msg:"SOC-LAB: HTTP Request to Ubuntu Web Server"; flow:established,to_server; classtype:not-suspicious; sid:1000090; rev:1;)
+
+# Detect traffic from Kali attacker
+alert ip 172.20.0.70 any -> any any (msg:"SOC-LAB: Traffic from Kali Attacker Container"; classtype:not-suspicious; sid:1000091; rev:1;)
+
+# Detect suspicious user agents
+alert http any any -> $HOME_NET any (msg:"SOC-LAB: Suspicious User Agent - Scanner Tool"; flow:established,to_server; content:"User-Agent|3a|"; http_header; pcre:"/User-Agent\x3a\s*(sqlmap|nikto|dirb|gobuster|wfuzz|burp|acunetix)/i"; classtype:web-application-attack; sid:1000092; rev:1;)

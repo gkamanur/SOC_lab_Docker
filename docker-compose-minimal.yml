@@ -1,0 +1,153 @@
+version: '3.8'
+
+# MINIMAL MODE - For systems with 4-6GB RAM
+# Only runs core SIEM components without Wazuh/Suricata
+# Deploy with: docker compose -f docker-compose-minimal.yml up -d
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: soc-elasticsearch-mini
+    environment:
+      - node.name=soc-es-node
+      - cluster.name=soc-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=false
+      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+    mem_limit: 512m
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - soc-es-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.10
+    restart: unless-stopped
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: soc-logstash-mini
+    environment:
+      - "LS_JAVA_OPTS=-Xms256m -Xmx256m"
+    mem_limit: 512m
+    volumes:
+      - ./configs/logstash/logstash-minimal.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./configs/logstash/pipeline:/usr/share/logstash/pipeline:ro
+    ports:
+      - "5044:5044"
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.11
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: soc-kibana-mini
+    environment:
+      - ELASTICSEARCH_HOSTS=http://172.20.0.10:9200
+      - SERVER_NAME=soc-kibana
+      - SERVER_HOST=0.0.0.0
+      - SERVER_HOST=0.0.0.0
+    mem_limit: 400m
+    ports:
+      - "5601:5601"
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.12
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+  ubuntu-web:
+    build:
+      context: ./dockerfiles
+      dockerfile: Dockerfile.ubuntu-web
+    container_name: soc-ubuntu-web-mini
+    hostname: ubuntu-web
+    volumes:
+      - ubuntu-web-logs:/var/log
+    ports:
+      - "8080:80"
+      - "2222:22"
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.50
+    restart: unless-stopped
+    mem_limit: 200m
+
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: soc-suricata-mini
+    command: -i eth0
+    network_mode: "service:ubuntu-web"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - SURICATA_OPTIONS=-v
+    volumes:
+      - ./configs/suricata/suricata-minimal.yaml:/etc/suricata/suricata.yaml:ro
+      - ./configs/suricata/rules/custom.rules:/etc/suricata/rules/custom.rules:ro
+      - soc-suricata-logs:/var/log/suricata
+    mem_limit: 150m
+    restart: unless-stopped
+
+  kali-attacker:
+    build:
+      context: ./dockerfiles
+      dockerfile: Dockerfile.kali-attacker
+    container_name: soc-kali-attacker-mini
+    hostname: kali-attacker
+    privileged: true
+    mem_limit: 800m
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.70
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: soc-filebeat-mini
+    user: root
+    command: filebeat -e -strict.perms=false
+    mem_limit: 100m
+    environment:
+      - ELASTICSEARCH_HOSTS=http://172.20.0.10:9200
+    volumes:
+      - ./configs/filebeat/filebeat-minimal.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ubuntu-web-logs:/var/log/ubuntu-web:ro
+      - soc-suricata-logs:/var/log/suricata:ro
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.40
+    depends_on:
+      - logstash
+    restart: unless-stopped
+
+networks:
+  soc-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+
+volumes:
+  soc-es-data:
+    driver: local
+  ubuntu-web-logs:
+    driver: local
+  soc-suricata-logs:
+    driver: local

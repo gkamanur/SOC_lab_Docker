@@ -1,0 +1,93 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python for log generation
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create Windows log simulator script
+RUN mkdir -p /opt/windows-sim /var/log/windows-sim
+
+# Create Python script to generate Windows-like logs
+RUN cat > /opt/windows-sim/log_generator.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import time
+import random
+from datetime import datetime
+
+def generate_sysmon_event():
+    """Generate simulated Sysmon Event ID 1 (Process Creation)"""
+    processes = [
+        {"name": "powershell.exe", "parent": "explorer.exe", "cmdline": "powershell.exe Get-Process"},
+        {"name": "cmd.exe", "parent": "explorer.exe", "cmdline": "cmd.exe /c dir"},
+        {"name": "notepad.exe", "parent": "explorer.exe", "cmdline": "notepad.exe"},
+        {"name": "chrome.exe", "parent": "explorer.exe", "cmdline": "chrome.exe https://google.com"},
+    ]
+    
+    proc = random.choice(processes)
+    event = {
+        "@timestamp": datetime.utcnow().isoformat() + "Z",
+        "event": {"code": 1, "category": "process"},
+        "log_source": "sysmon",
+        "process": {
+            "name": proc["name"],
+            "executable": f"C:\\Windows\\System32\\{proc['name']}",
+            "command_line": proc["cmdline"],
+            "pid": random.randint(1000, 9999),
+            "parent": {"executable": f"C:\\Windows\\{proc['parent']}"}
+        },
+        "user": {"name": "labadmin"},
+        "host": {"name": "windows-sim"}
+    }
+    return json.dumps(event)
+
+def generate_security_event():
+    """Generate simulated Windows Security Event"""
+    event_types = [
+        {"code": 4624, "type": "successful_logon"},
+        {"code": 4625, "type": "failed_logon"},
+        {"code": 4688, "type": "process_creation"},
+    ]
+    
+    evt = random.choice(event_types)
+    event = {
+        "@timestamp": datetime.utcnow().isoformat() + "Z",
+        "event": {"code": evt["code"]},
+        "log_source": "windows_security",
+        "event_type": evt["type"],
+        "user": {"name": "labadmin"},
+        "host": {"name": "windows-sim"}
+    }
+    return json.dumps(event)
+
+def main():
+    print("Windows Log Simulator Started")
+    log_file = "/var/log/windows-sim/events.json"
+    
+    while True:
+        # Generate random event
+        if random.random() < 0.7:
+            log_entry = generate_sysmon_event()
+        else:
+            log_entry = generate_security_event()
+        
+        # Write to log file
+        with open(log_file, "a") as f:
+            f.write(log_entry + "\n")
+        
+        # Wait before next event (simulate normal activity)
+        time.sleep(random.uniform(5, 30))
+
+if __name__ == "__main__":
+    main()
+EOF
+
+RUN chmod +x /opt/windows-sim/log_generator.py
+
+CMD ["python3", "/opt/windows-sim/log_generator.py"]

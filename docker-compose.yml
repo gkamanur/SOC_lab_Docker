@@ -1,0 +1,285 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # SIEM CORE - Elasticsearch, Logstash, Kibana
+  # ==========================================
+  
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: soc-elasticsearch
+    environment:
+      - node.name=soc-es-node
+      - cluster.name=soc-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.security.enabled=true
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - soc-es-data:/usr/share/elasticsearch/data
+      - ./configs/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -u elastic:${ELASTIC_PASSWORD:-changeme} http://localhost:9200 >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: soc-logstash
+    environment:
+      - "LS_JAVA_OPTS=-Xms512m -Xmx512m"
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+    volumes:
+      - ./configs/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./configs/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - soc-logstash-data:/usr/share/logstash/data
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.11
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9600 >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: soc-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://172.20.0.10:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+      - SERVER_NAME=soc-kibana
+      - SERVER_HOST=0.0.0.0
+    volumes:
+      - ./configs/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+      - soc-kibana-data:/usr/share/kibana/data
+    ports:
+      - "5601:5601"
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.12
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:5601/api/status >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # ==========================================
+  # SECURITY TOOLS - Wazuh, Suricata
+  # ==========================================
+
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.7.0
+    container_name: soc-wazuh-manager
+    hostname: wazuh-manager
+    environment:
+      - INDEXER_URL=https://172.20.0.10:9200
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=admin
+      - FILEBEAT_SSL_VERIFICATION_MODE=none
+      - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/certs/ca-certificates.crt
+      - API_USERNAME=wazuh
+      - API_PASSWORD=wazuh
+    volumes:
+      - soc-wazuh-data:/var/ossec/data
+      - ./configs/wazuh/ossec.conf:/var/ossec/etc/ossec.conf:ro
+    ports:
+      - "1514:1514/udp"  # Agent connection
+      - "1515:1515"      # Agent enrollment
+      - "55000:55000"    # API
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.20
+    restart: unless-stopped
+
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:4.7.0
+    container_name: soc-wazuh-dashboard
+    environment:
+      - OPENSEARCH_HOSTS=https://172.20.0.10:9200
+      - WAZUH_API_URL=https://172.20.0.20:55000
+    ports:
+      - "443:5601"
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.21
+    depends_on:
+      - wazuh-manager
+    restart: unless-stopped
+
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: soc-suricata
+    command: -i eth0
+    network_mode: "service:ubuntu-web"  # Monitor ubuntu-web traffic
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    environment:
+      - SURICATA_OPTIONS=-v
+    volumes:
+      - ./configs/suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ./configs/suricata/rules:/etc/suricata/rules:ro
+      - ./configs/suricata/update-rules.sh:/usr/local/bin/update-rules.sh:ro
+      - soc-suricata-logs:/var/log/suricata
+      - soc-suricata-rules:/var/lib/suricata/rules
+    mem_limit: 512m
+    restart: unless-stopped
+
+  # ==========================================
+  # TARGET SYSTEMS - Ubuntu Web Server
+  # ==========================================
+
+  ubuntu-web:
+    build:
+      context: ./dockerfiles
+      dockerfile: Dockerfile.ubuntu-web
+    container_name: soc-ubuntu-web
+    hostname: ubuntu-web
+    environment:
+      - LOGSTASH_HOST=172.20.0.11:5044
+    volumes:
+      - ./configs/filebeat/filebeat.yml:/etc/filebeat/filebeat.yml:ro
+      - ubuntu-web-logs:/var/log
+    ports:
+      - "8080:80"   # Apache
+      - "2222:22"   # SSH (avoid conflict with host)
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.50
+    restart: unless-stopped
+
+  # ==========================================
+  # WINDOWS SIMULATION CONTAINER
+  # ==========================================
+
+  windows-sim:
+    build:
+      context: ./dockerfiles
+      dockerfile: Dockerfile.windows-sim
+    container_name: soc-windows-sim
+    hostname: windows-sim
+    environment:
+      - LOGSTASH_HOST=172.20.0.11:5044
+      - LOG_GENERATOR=true
+    volumes:
+      - windows-sim-logs:/var/log/windows-sim
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.60
+    restart: unless-stopped
+
+  # ==========================================
+  # ATTACKER SYSTEM - Kali Linux
+  # ==========================================
+
+  kali-attacker:
+    build:
+      context: ./dockerfiles
+      dockerfile: Dockerfile.kali-attacker
+    container_name: soc-kali-attacker
+    hostname: kali-attacker
+    privileged: true  # For some attack tools
+    volumes:
+      - ./attack-scenarios:/opt/attack-scenarios:ro
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.70
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+  # ==========================================
+  # LOG SHIPPER - Filebeat (standalone)
+  # ==========================================
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: soc-filebeat
+    user: root
+    command: filebeat -e -strict.perms=false
+    environment:
+      - ELASTICSEARCH_HOSTS=http://172.20.0.10:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+      - LOGSTASH_HOSTS=172.20.0.11:5044
+    volumes:
+      - ./configs/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - soc-suricata-logs:/var/log/suricata:ro
+      - ubuntu-web-logs:/var/log/ubuntu-web:ro
+      - windows-sim-logs:/var/log/windows-sim:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      soc-network:
+        ipv4_address: 172.20.0.40
+    depends_on:
+      logstash:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ==========================================
+# NETWORKS
+# ==========================================
+
+networks:
+  soc-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+
+# ==========================================
+# VOLUMES (Persistent Data)
+# ==========================================
+
+volumes:
+  soc-es-data:
+    driver: local
+  soc-kibana-data:
+    driver: local
+  soc-logstash-data:
+    driver: local
+  soc-wazuh-data:
+    driver: local
+  soc-suricata-logs:
+    driver: local
+  soc-suricata-rules:
+    driver: local
+  ubuntu-web-logs:
+    driver: local
+  windows-sim-logs:
+    driver: local
