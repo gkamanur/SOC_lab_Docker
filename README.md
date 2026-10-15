@@ -587,5 +587,3 @@ Pull requests welcome!
 
 ---
 
-**This Docker deployment makes the SOC Detection Lab portable, fast, and interview-ready. Share your docker-compose.yml and anyone can spin up your exact lab in minutes.** 🐳
-
